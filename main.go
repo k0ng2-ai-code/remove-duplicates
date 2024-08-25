@@ -35,7 +35,7 @@ func main() {
 	rootCmd.Flags().BoolVarP(&dryRun, "dry-run", "d", false, "Dry run, do not delete any files")
 	rootCmd.Flags().StringSliceVarP(&referents, "referent", "r", nil, "Optional referent directories (comma-separated)")
 	rootCmd.Flags().IntVarP(&threads, "threads", "t", 1, "Number of threads to use for hashing")
-	rootCmd.Flags().StringVarP(&removeBy, "remove-by", "m", "newest", "Removal method: newest, oldest, interactive")
+	rootCmd.Flags().StringVarP(&removeBy, "remove-by", "m", "oldest", "Removal method: newest, oldest, interactive")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show verbose output during hashing")
 
 	if err := rootCmd.Execute(); err != nil {
