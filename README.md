@@ -52,7 +52,10 @@ This will install the binary in your `$GOPATH/bin` directory, making it availabl
 - `-d, --dry-run`: Perform a dry run, do not delete any files.
 - `-r, --referent`: Optional referent directories (comma-separated).
 - `-t, --threads`: Number of threads to use for hashing. Default is 1.
-- `-m, --remove-by`: Removal method: `newest`, `oldest`, or `interactive`. Default is `newest`.
+- `-m, --remove-by`: Specify which duplicate files to remove:
+  - `newest`: Removes all duplicates except the newest file.
+  - `oldest`: Removes all duplicates except the oldest file.
+  - `interactive`: Allows you to manually select which duplicates to remove.
 - `-v, --verbose`: Show verbose output during hashing.
 
 ### Examples
