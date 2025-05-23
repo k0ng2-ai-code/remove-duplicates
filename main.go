@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -51,6 +52,15 @@ func computeHash(filePath string) ([]byte, error) {
 	}
 	defer file.Close()
 
+	s, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if s.Mode() == fs.ModeSymlink {
+		return nil, fmt.Errorf("file is a symlink: %s", filePath)
+	}
+
 	hasher := blake3.New()
 	if _, err := io.Copy(hasher, file); err != nil {
 		return nil, err
@@ -70,7 +80,7 @@ func hashFiles(files []string) map[string][]string {
 	}
 	close(fileChan)
 
-	for i := 0; i < threads; i++ {
+	for range threads {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
