@@ -16,31 +16,31 @@ func createTestFile(t *testing.T, dir, name, content string) string {
 	return filePath
 }
 
-func TestComputeHash(t *testing.T) {
+func TestCalculateFileHash(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := createTestFile(t, tempDir, "test.txt", "Hello, World!")
 
-	hash, err := computeHash(filePath)
+	hash, err := calculateFileHash(filePath)
 	if err != nil {
 		t.Fatalf("Failed to compute hash: %v", err)
 	}
 
 	// Expected hash value as a hex-encoded string
 	expectedHash := "288a86a79f20a3d6dccdca7713beaed178798296bdfa7913fa2a62d9727bf8f8" // Replace with actual BLAKE3 hash of "Hello, World!"
-	if fmt.Sprintf("%x", hash) != expectedHash {
-		t.Errorf("Expected hash %v, got %x", expectedHash, hash)
+	if hash != expectedHash {
+		t.Errorf("Expected hash %v, got %s", expectedHash, hash)
 	}
 }
 
-func TestHashFiles(t *testing.T) {
-	threads = 1
+func TestCreateFileHashMap(t *testing.T) {
+	config := &Config{threadCount: 1, verboseOutput: false}
 	tempDir := t.TempDir()
 	filePath1 := createTestFile(t, tempDir, "file1.txt", "Content A")
 	filePath2 := createTestFile(t, tempDir, "file2.txt", "Content A")
 	filePath3 := createTestFile(t, tempDir, "file3.txt", "Content B")
 
 	files := []string{filePath1, filePath2, filePath3}
-	hashMap := hashFiles(files)
+	hashMap := createFileHashMap(files, config)
 
 	fmt.Println("HashMap:", hashMap) // Debug output
 
@@ -50,7 +50,7 @@ func TestHashFiles(t *testing.T) {
 	}
 
 	// Ensure both file1.txt and file2.txt have the same hash
-	hash1 := fmt.Sprintf("%x", computeHashOrFail(t, filePath1))
+	hash1 := calculateFileHashOrFail(t, filePath1)
 	fmt.Printf("Expected Hash for file1.txt: %s\n", hash1) // Debug output
 
 	if len(hashMap[hash1]) != 2 {
@@ -58,28 +58,25 @@ func TestHashFiles(t *testing.T) {
 	}
 }
 
-func computeHashOrFail(t *testing.T, filePath string) []byte {
-	hash, err := computeHash(filePath)
+func calculateFileHashOrFail(t *testing.T, filePath string) string {
+	hash, err := calculateFileHash(filePath)
 	if err != nil {
 		t.Fatalf("Failed to compute hash: %v", err)
 	}
 	return hash
 }
 
-func TestRemoveDuplicates(t *testing.T) {
+func TestProcessAndRemoveDuplicates(t *testing.T) {
+	config := &Config{threadCount: 1, removalStrategy: "newest", dryRun: true, verboseOutput: false}
 	tempDir := t.TempDir()
 	filePath1 := createTestFile(t, tempDir, "file1.txt", "Content A")
 	filePath2 := createTestFile(t, tempDir, "file2.txt", "Content A")
 	filePath3 := createTestFile(t, tempDir, "file3.txt", "Content B")
 
 	files := []string{filePath1, filePath2, filePath3}
-	hashMap := hashFiles(files)
+	hashMap := createFileHashMap(files, config)
 
-	// Set removeBy to "newest" for testing
-	removeBy = "newest"
-	dryRun = true
-
-	removeDuplicates(hashMap, nil)
+	processAndRemoveDuplicates(hashMap, nil, config)
 
 	// Verify that only the newest duplicate would have been removed
 	if _, err := os.Stat(filePath2); os.IsNotExist(err) {
@@ -88,6 +85,7 @@ func TestRemoveDuplicates(t *testing.T) {
 }
 
 func TestReferentDirectory(t *testing.T) {
+	config := &Config{threadCount: 1, removalStrategy: "newest", dryRun: true, verboseOutput: false}
 	tempDir := t.TempDir()
 	referentDir := t.TempDir()
 
@@ -98,14 +96,10 @@ func TestReferentDirectory(t *testing.T) {
 	files := []string{filePath1, filePath2}
 	referentFiles := []string{referentFile}
 
-	referentHashes := hashFiles(referentFiles)
-	fileHashes := hashFiles(files)
+	referentHashes := createFileHashMap(referentFiles, config)
+	fileHashes := createFileHashMap(files, config)
 
-	// Set removeBy to "newest" for testing
-	removeBy = "newest"
-	dryRun = true
-
-	removeDuplicates(fileHashes, referentHashes)
+	processAndRemoveDuplicates(fileHashes, referentHashes, config)
 
 	// Verify that none of the original files were removed because they match the referent file
 	if _, err := os.Stat(filePath1); os.IsNotExist(err) {
