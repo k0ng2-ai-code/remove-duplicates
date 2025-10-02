@@ -4,5 +4,12 @@
 			"path": ".."
 		}
 	],
-	"settings": {}
+	"settings": {
+		"go.goroot": "${workspaceFolder}/.vscode/mise-tools/goRoot",
+		"go.alternateTools": {
+			"go": "${workspaceFolder}/.vscode/mise-tools/go",
+			"dlv": "${workspaceFolder}/.vscode/mise-tools/dlv",
+			"gopls": "${workspaceFolder}/.vscode/mise-tools/gopls"
+		}
+	}
 }
