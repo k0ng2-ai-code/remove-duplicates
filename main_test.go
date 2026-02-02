@@ -40,7 +40,7 @@ func TestHashFiles(t *testing.T) {
 	filePath3 := createTestFile(t, tempDir, "file3.txt", "Content B")
 
 	files := []string{filePath1, filePath2, filePath3}
-	hashMap := hashFiles(files)
+	hashMap := hashFiles(files, nil)
 
 	fmt.Println("HashMap:", hashMap) // Debug output
 
@@ -73,7 +73,7 @@ func TestRemoveDuplicates(t *testing.T) {
 	filePath3 := createTestFile(t, tempDir, "file3.txt", "Content B")
 
 	files := []string{filePath1, filePath2, filePath3}
-	hashMap := hashFiles(files)
+	hashMap := hashFiles(files, nil)
 
 	// Set removeBy to "newest" for testing
 	removeBy = "newest"
@@ -98,8 +98,8 @@ func TestReferentDirectory(t *testing.T) {
 	files := []string{filePath1, filePath2}
 	referentFiles := []string{referentFile}
 
-	referentHashes := hashFiles(referentFiles)
-	fileHashes := hashFiles(files)
+	referentHashes := hashFiles(referentFiles, nil)
+	fileHashes := hashFiles(files, nil)
 
 	// Set removeBy to "newest" for testing
 	removeBy = "newest"
@@ -114,5 +114,38 @@ func TestReferentDirectory(t *testing.T) {
 
 	if _, err := os.Stat(filePath2); os.IsNotExist(err) {
 		t.Errorf("File %s should not have been removed", filePath2)
+	}
+}
+func TestSQLiteCache(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	db, err := initDB(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to init DB: %v", err)
+	}
+	defer db.Close()
+
+	filePath := createTestFile(t, tempDir, "cache_test.txt", "Cache content")
+	absPath, _ := filepath.Abs(filePath)
+	fi, _ := os.Stat(filePath)
+	hash := "some-hash"
+
+	err = saveCachedHash(db, absPath, hash, fi.ModTime().Unix(), fi.Size())
+	if err != nil {
+		t.Fatalf("Failed to save cached hash: %v", err)
+	}
+
+	h, found := getCachedHash(db, absPath, fi.ModTime().Unix(), fi.Size())
+	if !found {
+		t.Error("Expected to find cached hash")
+	}
+	if h != hash {
+		t.Errorf("Expected hash %s, got %s", hash, h)
+	}
+
+	// Test with wrong size
+	_, found = getCachedHash(db, absPath, fi.ModTime().Unix(), fi.Size()+1)
+	if found {
+		t.Error("Expected not to find cached hash with wrong size")
 	}
 }

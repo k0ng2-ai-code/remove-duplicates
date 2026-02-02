@@ -1,6 +1,8 @@
 package main
 
 import (
+	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"io/fs"
@@ -13,14 +15,18 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/zeebo/blake3"
+	_ "modernc.org/sqlite"
 )
 
 var (
-	dryRun    bool
-	referents []string
-	threads   int
-	removeBy  string
-	verbose   bool
+	dryRun     bool
+	referents  []string
+	threads    int
+	removeBy   string
+	verbose    bool
+	useCache   bool
+	cachePath  string
+	clearCache bool
 )
 
 func main() {
@@ -38,11 +44,76 @@ func main() {
 	rootCmd.Flags().IntVarP(&threads, "threads", "t", 1, "Number of threads to use for hashing")
 	rootCmd.Flags().StringVarP(&removeBy, "remove-by", "m", "oldest", "Removal method: newest, oldest, interactive")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show verbose output during hashing")
+	rootCmd.Flags().BoolVar(&useCache, "use-cache", true, "Use cache for file hashes")
+	rootCmd.Flags().StringVar(&cachePath, "cache-path", "", "Path to cache file (default: user cache directory)")
+	rootCmd.Flags().BoolVar(&clearCache, "clear-cache", false, "Clear the cache before running")
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+}
+
+func getCacheFilePath() (string, error) {
+	if cachePath != "" {
+		return cachePath, nil
+	}
+	userCacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(userCacheDir, "remove-duplicates")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "cache.db"), nil
+}
+
+func initDB(path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+
+	if clearCache {
+		_, err = db.Exec("DROP TABLE IF EXISTS cache")
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
+
+	schema := `
+	CREATE TABLE IF NOT EXISTS cache (
+		path TEXT PRIMARY KEY,
+		hash TEXT,
+		mod_time INTEGER,
+		size INTEGER
+	);`
+	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	return db, nil
+}
+
+func getCachedHash(db *sql.DB, path string, modTime, size int64) (string, bool) {
+	var hash string
+	var mTime, s int64
+	err := db.QueryRow("SELECT hash, mod_time, size FROM cache WHERE path = ?", path).Scan(&hash, &mTime, &s)
+	if err != nil {
+		return "", false
+	}
+	if mTime == modTime && s == size {
+		return hash, true
+	}
+	return "", false
+}
+
+func saveCachedHash(db *sql.DB, path string, hash string, modTime, size int64) error {
+	_, err := db.Exec("INSERT OR REPLACE INTO cache (path, hash, mod_time, size) VALUES (?, ?, ?, ?)", path, hash, modTime, size)
+	return err
 }
 
 func computeHash(filePath string) ([]byte, error) {
@@ -69,7 +140,7 @@ func computeHash(filePath string) ([]byte, error) {
 	return hasher.Sum(nil), nil
 }
 
-func hashFiles(files []string) map[string][]string {
+func hashFiles(files []string, db *sql.DB) map[string][]string {
 	hashMap := make(map[string][]string)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -85,14 +156,47 @@ func hashFiles(files []string) map[string][]string {
 		go func() {
 			defer wg.Done()
 			for file := range fileChan {
-				hash, err := computeHash(file)
-				if err != nil {
-					fmt.Printf("Error hashing file %s: %v\n", file, err)
-					continue
+				var hash []byte
+				var cached bool
+
+				if useCache && db != nil {
+					fi, err := os.Stat(file)
+					if err == nil {
+						absPath, err := filepath.Abs(file)
+						if err == nil {
+							if h, found := getCachedHash(db, absPath, fi.ModTime().Unix(), fi.Size()); found {
+								hash, _ = hex.DecodeString(h)
+								cached = true
+							}
+						}
+					}
 				}
+
+				if !cached {
+					var err error
+					hash, err = computeHash(file)
+					if err != nil {
+						fmt.Printf("Error hashing file %s: %v\n", file, err)
+						continue
+					}
+					if useCache && db != nil {
+						absPath, err := filepath.Abs(file)
+						if err == nil {
+							fi, err := os.Stat(file)
+							if err == nil {
+								saveCachedHash(db, absPath, fmt.Sprintf("%x", hash), fi.ModTime().Unix(), fi.Size())
+							}
+						}
+					}
+				}
+
 				hashString := fmt.Sprintf("%x", hash) // Convert hash to string for map key
 				if verbose {
-					fmt.Printf("Hashing file: %s, Hash: %s\n", file, hashString)
+					status := "Calculated"
+					if cached {
+						status = "Cached"
+					}
+					fmt.Printf("%s hash for file: %s, Hash: %s\n", status, file, hashString)
 				}
 				mu.Lock()
 				hashMap[hashString] = append(hashMap[hashString], file)
@@ -213,6 +317,26 @@ func execute(args []string) {
 		return
 	}
 
+	var db *sql.DB
+	var cacheFile string
+	var err error
+
+	if useCache {
+		cacheFile, err = getCacheFilePath()
+		if err != nil {
+			fmt.Printf("Error getting cache file path: %v\n", err)
+			useCache = false
+		} else {
+			db, err = initDB(cacheFile)
+			if err != nil {
+				fmt.Printf("Error initializing cache database: %v\n", err)
+				useCache = false
+			} else {
+				defer db.Close()
+			}
+		}
+	}
+
 	// Gather files from referent directories
 	referentFiles, err := gatherFiles(referents)
 	if err != nil {
@@ -228,10 +352,10 @@ func execute(args []string) {
 	}
 
 	// Hash files in referent directories
-	referentHashes := hashFiles(referentFiles)
+	referentHashes := hashFiles(referentFiles, db)
 
 	// Hash files in other directories
-	fileHashes := hashFiles(files)
+	fileHashes := hashFiles(files, db)
 
 	// Compare and remove duplicates only from non-referent directories
 	removeDuplicates(fileHashes, referentHashes)
