@@ -54,7 +54,7 @@ func main() {
 	}
 }
 
-func getCacheFilePath() (string, error) {
+func getCacheFilePath(dirs []string) (string, error) {
 	if cachePath != "" {
 		return cachePath, nil
 	}
@@ -66,7 +66,25 @@ func getCacheFilePath() (string, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "cache.db"), nil
+
+	// Normalize and sort paths to ensure consistent hashing
+	absPaths := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		abs, err := filepath.Abs(d)
+		if err == nil {
+			absPaths = append(absPaths, abs)
+		}
+	}
+	sort.Strings(absPaths)
+
+	// Hash the combined absolute paths
+	hasher := blake3.New()
+	for _, p := range absPaths {
+		hasher.Write([]byte(p))
+	}
+	hash := hex.EncodeToString(hasher.Sum(nil))
+
+	return filepath.Join(dir, fmt.Sprintf("%s.db", hash)), nil
 }
 
 func initDB(path string) (*sql.DB, error) {
@@ -322,7 +340,9 @@ func execute(args []string) {
 	var err error
 
 	if useCache {
-		cacheFile, err = getCacheFilePath()
+		allDirs := append([]string{}, args...)
+		allDirs = append(allDirs, referents...)
+		cacheFile, err = getCacheFilePath(allDirs)
 		if err != nil {
 			fmt.Printf("Error getting cache file path: %v\n", err)
 			useCache = false
